@@ -6,15 +6,15 @@ class Igrep < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/GrowlyX/igrep/releases/download/v#{version}/igrep-darwin-arm64.tar.gz"
-      sha256 "PLACEHOLDER"
+      url "https://github.com/GrowlyX/igrep/releases/download/v0.0.1/igrep-darwin-arm64.tar.gz"
+      sha256 "Not"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/GrowlyX/igrep/releases/download/v#{version}/igrep-linux-amd64.tar.gz"
-      sha256 "PLACEHOLDER"
+      url "https://github.com/GrowlyX/igrep/releases/download/v0.0.1/igrep-linux-amd64.tar.gz"
+      sha256 "Not"
     end
   end
 
