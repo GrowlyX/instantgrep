@@ -7,7 +7,7 @@ Builds a trigram inverted index over your codebase and uses it to skip files tha
 ## Install
 
 ```bash
-brew tap subham/igrep
+brew tap GrowlyX/igrep
 brew install igrep
 ```
 
@@ -34,6 +34,7 @@ igrep --no-index "pattern" .   # brute-force mode (no index)
 ```
 
 ## How it works
+[Cursor's research](https://cursor.com/blog/fast-regex-search)
 
 1. **Index** — Extracts all overlapping 3-byte trigrams from every file, stores in an inverted index with bloom-filter masks
 2. **Query** — Decomposes your regex into required trigrams
