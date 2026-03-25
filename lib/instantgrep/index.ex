@@ -190,15 +190,16 @@ defmodule Instantgrep.Index do
   end
 
   @doc """
-  Print index statistics to stdout.
+  Format index statistics as a string.
   """
-  @spec stats(t()) :: :ok
+  @spec stats(t()) :: String.t()
   def stats(%__MODULE__{} = index) do
-    IO.puts("Index Statistics:")
-    IO.puts("  Files indexed:   #{index.file_count}")
-    IO.puts("  Unique trigrams: #{index.trigram_count}")
-    IO.puts("  Build time:      #{format_time(index.build_time_us)}")
-    :ok
+    """
+    Index Statistics:
+      Files indexed:   #{index.file_count}
+      Unique trigrams: #{index.trigram_count}
+      Build time:      #{format_time(index.build_time_us)}
+    """ |> String.trim_trailing()
   end
 
   defp format_time(us) when us < 1_000, do: "#{us}µs"
