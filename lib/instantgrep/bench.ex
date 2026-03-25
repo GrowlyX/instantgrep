@@ -121,7 +121,7 @@ defmodule Instantgrep.Bench do
 
     run_fn = fn ->
       candidate_ids =
-        Query.evaluate(query_tree, fn trigram -> Index.lookup(index, trigram) end)
+        Query.evaluate_masked(query_tree, fn trigram -> Index.lookup_with_masks(index, trigram) end)
 
       candidate_files = Index.resolve_files(index, candidate_ids)
       results = Matcher.match_files(candidate_files, regex)

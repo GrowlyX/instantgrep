@@ -40,7 +40,7 @@ defmodule Instantgrep.Scanner do
 
     path
     |> Path.expand()
-    |> do_scan(max_size, gitignore_patterns)
+    |> do_scan_parallel(max_size, gitignore_patterns)
     |> Enum.with_index()
     |> Enum.map(fn {file_path, idx} -> {idx, file_path} end)
   end
@@ -56,17 +56,47 @@ defmodule Instantgrep.Scanner do
         if ignored_dir?(path) do
           []
         else
-          path
-          |> File.ls!()
-          |> Enum.flat_map(fn entry ->
-            full_path = Path.join(path, entry)
-            do_scan(full_path, max_size, gitignore_patterns)
-          end)
-          |> Enum.sort()
+          case File.ls(path) do
+            {:error, _} ->
+              []
+
+            {:ok, entries} ->
+              entries
+              |> Enum.flat_map(fn entry ->
+                do_scan(Path.join(path, entry), max_size, gitignore_patterns)
+              end)
+              |> Enum.sort()
+          end
         end
 
       true ->
         []
+    end
+  end
+
+  # Parallel top-level scan: dispatches each immediate child of the root in
+  # a separate Task; recursion within each task is sequential to avoid
+  # nested async_stream timeouts on deep directory trees.
+  defp do_scan_parallel(path, max_size, gitignore_patterns) do
+    case File.ls(path) do
+      {:error, _} ->
+        []
+
+      {:ok, entries} ->
+        entries
+        |> Task.async_stream(
+          fn entry ->
+            do_scan(Path.join(path, entry), max_size, gitignore_patterns)
+          end,
+          max_concurrency: System.schedulers_online(),
+          ordered: false,
+          timeout: :infinity
+        )
+        |> Enum.flat_map(fn
+          {:ok, results} -> results
+          {:exit, _} -> []
+        end)
+        |> Enum.sort()
     end
   end
 
@@ -78,7 +108,7 @@ defmodule Instantgrep.Scanner do
       ext in @binary_extensions -> false
       String.starts_with?(basename, ".") and ext == "" -> false
       gitignore_match?(path, gitignore_patterns) -> false
-      true -> file_size_ok?(path, max_size) and not binary_content?(path)
+      true -> file_size_ok?(path, max_size)
     end
   end
 
@@ -86,39 +116,6 @@ defmodule Instantgrep.Scanner do
     case File.stat(path) do
       {:ok, %{size: size}} -> size <= max_size and size > 0
       _ -> false
-    end
-  end
-
-  defp binary_content?(path) do
-    case File.open(path, [:read, :binary]) do
-      {:ok, file} ->
-        chunk = IO.binread(file, 512)
-        File.close(file)
-
-        case chunk do
-          :eof -> false
-          {:error, _} -> true
-          data when is_binary(data) -> binary_heuristic?(data)
-        end
-
-      _ ->
-        true
-    end
-  end
-
-  defp binary_heuristic?(data) do
-    # If more than 10% of bytes are control characters (non-text), treat as binary
-    total = byte_size(data)
-
-    if total == 0 do
-      false
-    else
-      null_count =
-        for <<byte <- data>>, byte == 0, reduce: 0 do
-          count -> count + 1
-        end
-
-      null_count > 0
     end
   end
 
