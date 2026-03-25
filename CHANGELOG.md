@@ -86,14 +86,14 @@ All paths use a **pre-computed newline offset tuple** (built once at cache load 
   - Long rare identifiers → **4–6ms** vs rg's 99–126ms (**20–23× faster**)
 - rg wins on broad patterns (`"#include"`, `"nullptr"`) where the index has low selectivity and rg's SIMD scan dominates.
 
-### Thin Python Client (`ig` — new file)
+### Thin Python Client (`ig.py` — new file)
 
 A 184-line Python 3 script that connects to the daemon socket directly, **bypassing BEAM VM startup (~3s per invocation)**.
 
 ```bash
-./ig "some_rare_identifier" /path/to/codebase/
-./ig -i "TODO" .
-./ig --time "pattern"
+python3 ig.py "some_rare_identifier" /path/to/codebase/
+python3 ig.py -i "TODO" .
+python3 ig.py --time "pattern"
 ```
 
 - Falls back to the full `instantgrep` escript if no daemon is running (with a warning).
@@ -157,4 +157,4 @@ Indexes built with an older format version are automatically detected and rebuil
 | `lib/instantgrep/matcher.ex` | `:binary.split` instead of `String.split` |
 | `lib/instantgrep/bench.ex` | Uses `evaluate_masked` + `lookup_with_masks` |
 | `lib/instantgrep/daemon.ex` | **New** — Unix socket daemon with content cache and fast-path matching |
-| `ig` | **New** — Python thin client (zero BEAM startup overhead) |
+| `ig.py` | **New** — Python thin client (zero BEAM startup overhead) |
