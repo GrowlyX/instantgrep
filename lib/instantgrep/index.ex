@@ -199,7 +199,8 @@ defmodule Instantgrep.Index do
       Files indexed:   #{index.file_count}
       Unique trigrams: #{index.trigram_count}
       Build time:      #{format_time(index.build_time_us)}
-    """ |> String.trim_trailing()
+    """
+    |> String.trim_trailing()
   end
 
   defp format_time(us) when us < 1_000, do: "#{us}µs"

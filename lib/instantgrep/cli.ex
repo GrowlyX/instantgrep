@@ -81,11 +81,15 @@ defmodule Instantgrep.CLI do
     index = Index.build(path)
     Index.save(index, path)
     stats = Index.stats(index)
-    output = """
-    Building index for #{path}...
-    Index saved to #{Path.join(path, ".instantgrep")}/
-    #{stats}
-    """ |> String.trim_trailing()
+
+    output =
+      """
+      Building index for #{path}...
+      Index saved to #{Path.join(path, ".instantgrep")}/
+      #{stats}
+      """
+      |> String.trim_trailing()
+
     {:ok, output}
   end
 
