@@ -19,7 +19,15 @@ defmodule Instantgrep.Index do
           file_metas: %{String.t() => {non_neg_integer(), integer(), non_neg_integer()}}
         }
 
-  defstruct [:postings_tables, :num_shards, :files_table, :file_count, :trigram_count, :build_time_us, file_metas: %{}]
+  defstruct [
+    :postings_tables,
+    :num_shards,
+    :files_table,
+    :file_count,
+    :trigram_count,
+    :build_time_us,
+    file_metas: %{}
+  ]
 
   @index_dir ".instantgrep"
   @files_file "files.dat"
@@ -50,7 +58,12 @@ defmodule Instantgrep.Index do
 
     postings_tables =
       for _ <- 1..num_shards do
-        :ets.new(:instantgrep_postings, [:bag, :public, write_concurrency: true, read_concurrency: true])
+        :ets.new(:instantgrep_postings, [
+          :bag,
+          :public,
+          write_concurrency: true,
+          read_concurrency: true
+        ])
       end
       |> List.to_tuple()
 
@@ -161,12 +174,13 @@ defmodule Instantgrep.Index do
         old_paths = old_metas |> Map.keys() |> MapSet.new()
 
         removed = MapSet.difference(old_paths, current_paths)
-        added   = MapSet.difference(current_paths, old_paths)
+        added = MapSet.difference(current_paths, old_paths)
 
         changed =
           MapSet.intersection(old_paths, current_paths)
           |> Enum.filter(fn path ->
             {_id, old_mtime, old_size} = old_metas[path]
+
             case File.stat(path, time: :posix) do
               {:ok, %{mtime: mtime, size: size}} -> mtime != old_mtime or size != old_size
               _ -> true
@@ -175,22 +189,26 @@ defmodule Instantgrep.Index do
           |> MapSet.new()
 
         unchanged = MapSet.size(current_paths) - MapSet.size(changed) - MapSet.size(added)
-        IO.puts("  #{MapSet.size(added)} added, #{MapSet.size(changed)} changed, " <>
-                "#{MapSet.size(removed)} removed, #{unchanged} unchanged")
+
+        IO.puts(
+          "  #{MapSet.size(added)} added, #{MapSet.size(changed)} changed, " <>
+            "#{MapSet.size(removed)} removed, #{unchanged} unchanged"
+        )
 
         if Enum.all?([added, changed, removed], &(MapSet.size(&1) == 0)) do
           IO.puts("Index is already up to date.")
           {:ok, index}
         else
           # Remove postings for deleted/changed files
-          to_remove     = MapSet.union(changed, removed)
+          to_remove = MapSet.union(changed, removed)
           ids_to_remove = Enum.map(to_remove, fn p -> elem(old_metas[p], 0) end)
-          shard_list    = Tuple.to_list(index.postings_tables)
+          shard_list = Tuple.to_list(index.postings_tables)
 
           Enum.each(ids_to_remove, fn file_id ->
             Enum.each(shard_list, fn table ->
               :ets.match_delete(table, {:_, file_id, :_, :_})
             end)
+
             :ets.delete(index.files_table, file_id)
           end)
 
@@ -218,6 +236,7 @@ defmodule Instantgrep.Index do
               case File.read(file_path) do
                 {:ok, content} ->
                   sample = binary_part(content, 0, min(512, byte_size(content)))
+
                   unless binary?(sample) do
                     content
                     |> Native.extract_trigrams()
@@ -265,11 +284,12 @@ defmodule Instantgrep.Index do
 
           elapsed = System.monotonic_time(:microsecond) - start_time
 
-          updated_index = %{index |
-            file_count: map_size(new_metas),
-            trigram_count: trigram_count,
-            build_time_us: elapsed,
-            file_metas: new_metas
+          updated_index = %{
+            index
+            | file_count: map_size(new_metas),
+              trigram_count: trigram_count,
+              build_time_us: elapsed,
+              file_metas: new_metas
           }
 
           save(updated_index, base_dir)
@@ -285,6 +305,7 @@ defmodule Instantgrep.Index do
   @spec lookup(t(), binary()) :: MapSet.t(non_neg_integer())
   def lookup(%__MODULE__{postings_tables: tables, num_shards: n}, trigram) do
     key = trigram_to_int(trigram)
+
     tables
     |> elem(rem(:erlang.phash2(key), n))
     |> :ets.lookup(key)
@@ -301,6 +322,7 @@ defmodule Instantgrep.Index do
           %{non_neg_integer() => {non_neg_integer(), non_neg_integer()}}
   def lookup_with_masks(%__MODULE__{postings_tables: tables, num_shards: n}, trigram) do
     key = trigram_to_int(trigram)
+
     tables
     |> elem(rem(:erlang.phash2(key), n))
     |> :ets.lookup(key)
@@ -359,11 +381,17 @@ defmodule Instantgrep.Index do
     t_meta =
       Task.async(fn ->
         File.write!(Path.join(dir, "meta.dat"), :erlang.term_to_binary(meta))
-        File.write!(Path.join(dir, @files_file),
-          :erlang.term_to_binary(:ets.tab2list(ft), [{:compressed, 1}]))
+
+        File.write!(
+          Path.join(dir, @files_file),
+          :erlang.term_to_binary(:ets.tab2list(ft), [{:compressed, 1}])
+        )
+
         if map_size(index.file_metas) > 0 do
-          File.write!(Path.join(dir, @file_metas_file),
-            :erlang.term_to_binary(index.file_metas, [{:compressed, 1}]))
+          File.write!(
+            Path.join(dir, @file_metas_file),
+            :erlang.term_to_binary(index.file_metas, [{:compressed, 1}])
+          )
         end
       end)
 
@@ -403,7 +431,12 @@ defmodule Instantgrep.Index do
             # Allocate all shard tables up front
             postings_tables =
               for _ <- 0..(num_shards - 1) do
-                :ets.new(:instantgrep_postings, [:bag, :public, write_concurrency: true, read_concurrency: true])
+                :ets.new(:instantgrep_postings, [
+                  :bag,
+                  :public,
+                  write_concurrency: true,
+                  read_concurrency: true
+                ])
               end
               |> List.to_tuple()
 
@@ -426,6 +459,7 @@ defmodule Instantgrep.Index do
             :ets.insert(files_table, files_data)
 
             metas_path = Path.join(dir, @file_metas_file)
+
             file_metas =
               if File.regular?(metas_path) do
                 metas_path |> File.read!() |> :erlang.binary_to_term()
@@ -471,7 +505,9 @@ defmodule Instantgrep.Index do
   # Count unique keys in a :bag table using first/next (which iterates unique keys, not objects)
   defp count_unique_keys(table), do: count_unique_keys(table, :ets.first(table), 0)
   defp count_unique_keys(_table, :"$end_of_table", n), do: n
-  defp count_unique_keys(table, key, n), do: count_unique_keys(table, :ets.next(table, key), n + 1)
+
+  defp count_unique_keys(table, key, n),
+    do: count_unique_keys(table, :ets.next(table, key), n + 1)
 
   defp binary?(data) when byte_size(data) == 0, do: false
 

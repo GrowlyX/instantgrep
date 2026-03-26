@@ -67,10 +67,10 @@ defmodule Instantgrep.CLI do
         aliases: [i: :ignore_case, h: :help]
       )
 
-    build  = Keyword.get(opts, :build,  false)
+    build = Keyword.get(opts, :build, false)
     update = Keyword.get(opts, :update, false)
-    stop   = Keyword.get(opts, :stop,   false)
-    stats  = Keyword.get(opts, :stats,  false)
+    stop = Keyword.get(opts, :stop, false)
+    stats = Keyword.get(opts, :stats, false)
 
     # For --build / --update / --stats / --stop, positional[0] is the directory.
     # For search, positional[0] is the pattern and positional[1] is the path.
@@ -190,7 +190,9 @@ defmodule Instantgrep.CLI do
 
     # Resolve file IDs to paths
     candidate_files = Index.resolve_files(index, candidate_ids)
-    candidate_count = if candidate_ids == :all, do: index.file_count, else: MapSet.size(candidate_ids)
+
+    candidate_count =
+      if candidate_ids == :all, do: index.file_count, else: MapSet.size(candidate_ids)
 
     # Full regex verification
     {match_us, results} = :timer.tc(fn -> Matcher.match_files(candidate_files, regex) end)
@@ -204,7 +206,12 @@ defmodule Instantgrep.CLI do
       IO.puts(:stderr, "")
       IO.puts(:stderr, "--- timing (pattern: #{inspect(pattern)}) ---")
       IO.puts(:stderr, "  index load:       #{fmt_us(load_us)}")
-      IO.puts(:stderr, "  trigram eval:     #{fmt_us(eval_us)}  (#{candidate_count}/#{index.file_count} files candidates)")
+
+      IO.puts(
+        :stderr,
+        "  trigram eval:     #{fmt_us(eval_us)}  (#{candidate_count}/#{index.file_count} files candidates)"
+      )
+
       IO.puts(:stderr, "  regex verify:     #{fmt_us(match_us)}  (#{length(results)} matches)")
       IO.puts(:stderr, "  total (in VM):    #{fmt_us(total_us)}")
     end

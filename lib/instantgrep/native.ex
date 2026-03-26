@@ -33,11 +33,20 @@ defmodule Instantgrep.Native do
 
       path ->
         result = :erlang.load_nif(String.to_charlist(path), 0)
+
         case result do
-          :ok                     -> :ok
-          {:error, {:upgrade, _}} -> :ok   # already loaded (hot-reload)
-          {:error, {:reload, _}}  -> :ok   # already loaded
-          {:error, reason}        ->
+          :ok ->
+            :ok
+
+          # already loaded (hot-reload)
+          {:error, {:upgrade, _}} ->
+            :ok
+
+          # already loaded
+          {:error, {:reload, _}} ->
+            :ok
+
+          {:error, reason} ->
             :logger.warning(~c"instantgrep NIF load failed: ~p (path: ~s)", [reason, path])
             :ok
         end
@@ -68,7 +77,7 @@ defmodule Instantgrep.Native do
     try do
       case compile_pattern_nif(pattern, flags) do
         {:ok, resource} -> {:ok, {:nif, resource}}
-        {:error, msg}   -> {:error, {msg, 0}}
+        {:error, msg} -> {:error, {msg, 0}}
       end
     rescue
       ErlangError -> fallback_compile(pattern, flags)
@@ -91,7 +100,7 @@ defmodule Instantgrep.Native do
   def scan_content({:re, compiled}, content) do
     case :re.run(content, compiled, [:global, capture: :first]) do
       {:match, all_matches} -> Enum.map(all_matches, &hd/1)
-      :nomatch              -> []
+      :nomatch -> []
     end
   end
 
@@ -123,9 +132,10 @@ defmodule Instantgrep.Native do
 
   defp fallback_compile(pattern, flags) do
     re_opts = if :erlang.band(flags, 1) != 0, do: [:caseless], else: []
+
     case :re.compile(pattern, re_opts) do
-      {:ok, compiled}  -> {:ok, {:re, compiled}}
-      {:error, _} = e  -> e
+      {:ok, compiled} -> {:ok, {:re, compiled}}
+      {:error, _} = e -> e
     end
   end
 
@@ -137,23 +147,29 @@ defmodule Instantgrep.Native do
     # to searching next to the escript binary and CWD/priv.
     priv_from_app =
       case :code.priv_dir(:instantgrep) do
-        {:error, _} -> nil
+        {:error, _} ->
+          nil
+
         dir ->
           base = Path.join([to_string(dir), "instantgrep_native"])
           if File.exists?(base <> ext), do: base, else: nil
       end
 
     priv_from_app ||
-      Enum.find([
-        Path.join([escript_dir(), "priv", "instantgrep_native"]),
-        Path.join([File.cwd!(), "priv", "instantgrep_native"])
-      ], fn base -> File.exists?(base <> ext) end)
+      Enum.find(
+        [
+          Path.join([escript_dir(), "priv", "instantgrep_native"]),
+          Path.join([File.cwd!(), "priv", "instantgrep_native"])
+        ],
+        fn base -> File.exists?(base <> ext) end
+      )
   end
 
   defp escript_dir do
     case :init.get_argument(:progname) do
       {:ok, [[name | _]]} ->
         name |> to_string() |> Path.dirname() |> Path.absname()
+
       _ ->
         File.cwd!()
     end
