@@ -28,9 +28,8 @@ jobs:
           otp-version: "27"
           elixir-version: "1.16"
 
-      - run: mix deps.get
+      - run: bash build.sh
       - run: mix test
-      - run: mix escript.build
 
       - name: Package (unix)
         if: runner.os != 'Windows'
