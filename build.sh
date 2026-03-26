@@ -5,7 +5,7 @@ set -e
 echo "==> Fetching dependencies..."
 mix deps.get
 
-echo "==> Building PCRE2-JIT NIF..."
+echo "==> Building PCRE2-JIT NIF and ig client..."
 make all
 
 echo "==> Compiling..."
@@ -21,4 +21,4 @@ MIX_ENV=prod mix escript.build --name instantgrep-bench --main-module Instantgre
 
 echo ""
 echo "Built:"
-ls -la instantgrep instantgrep-bench 2>/dev/null || ls -la instantgrep
+ls -la ig_client instantgrep instantgrep-bench 2>/dev/null || ls -la ig_client instantgrep

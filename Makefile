@@ -23,6 +23,9 @@ PRIV_DIR = priv
 NIF_SO   = $(PRIV_DIR)/instantgrep_native.so
 SRC      = c_src/instantgrep_native.c
 
+IG_BIN   = ig_client
+IG_SRC   = c_src/ig.c
+
 CFLAGS  = -O2 -Wall -Wextra -fPIC -I$(ERTS_INCLUDE) $(PCRE2_CFLAGS)
 LDFLAGS = -shared -fPIC $(PCRE2_LDFLAGS)
 
@@ -36,14 +39,19 @@ endif
 
 .PHONY: all clean
 
-all: $(NIF_SO)
+all: $(NIF_SO) $(IG_BIN)
 
 $(NIF_SO): $(SRC) | $(PRIV_DIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 	@echo "  NIF built: $@"
 
+# ig is a plain C binary — no ERTS headers, no PCRE2 needed
+$(IG_BIN): $(IG_SRC)
+	$(CC) -O2 -Wall -Wextra -o $@ $<
+	@echo "  ig_client built: $@"
+
 $(PRIV_DIR):
 	mkdir -p $(PRIV_DIR)
 
 clean:
-	rm -f $(NIF_SO)
+	rm -f $(NIF_SO) $(IG_BIN)
