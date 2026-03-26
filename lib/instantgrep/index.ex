@@ -74,39 +74,11 @@ defmodule Instantgrep.Index do
 
     # Parallel trigram extraction — each worker splits its rows across shards
     # by trigram hash (batch-insert per shard), reducing lock contention by num_shards.
-    # Extraction workers return a stat entry alongside writing into ETS,
-    # folding the file_metas collection into the same parallel pass.
     file_metas =
       files
       |> Task.async_stream(
         fn {file_id, file_path} ->
-          stat_entry =
-            case File.stat(file_path, time: :posix) do
-              {:ok, %{mtime: mtime, size: size}} -> {file_path, {file_id, mtime, size}}
-              _ -> nil
-            end
-
-          case File.read(file_path) do
-            {:ok, content} ->
-              sample = binary_part(content, 0, min(512, byte_size(content)))
-
-              unless binary?(sample) do
-                content
-                |> Native.extract_trigrams()
-                |> Enum.group_by(
-                  fn {trigram, _nm, _lm} -> rem(:erlang.phash2(trigram), num_shards) end,
-                  fn {trigram, nm, lm} -> {trigram, file_id, nm, lm} end
-                )
-                |> Enum.each(fn {shard, rows} ->
-                  :ets.insert(elem(postings_tables, shard), rows)
-                end)
-              end
-
-            {:error, _} ->
-              :ok
-          end
-
-          stat_entry
+          index_file_content(file_path, file_id, postings_tables, num_shards)
         end,
         max_concurrency: num_shards * 2,
         ordered: false,
@@ -151,151 +123,118 @@ defmodule Instantgrep.Index do
   def update(base_dir) do
     case load(base_dir) do
       {:error, :not_found} ->
-        IO.puts("No existing index found — performing full build...")
-        index = build(base_dir)
-        save(index, base_dir)
-        {:ok, index}
+        full_rebuild(base_dir, "No existing index found")
 
       {:ok, %__MODULE__{file_metas: old_metas}} when map_size(old_metas) == 0 ->
-        IO.puts("No file metadata in index — performing full rebuild...")
-        index = build(base_dir)
-        save(index, base_dir)
-        {:ok, index}
+        full_rebuild(base_dir, "No file metadata in index")
 
       {:ok, %__MODULE__{file_metas: old_metas} = index} ->
-        start_time = System.monotonic_time(:microsecond)
-
-        # Re-scan directory for current file paths (no IDs yet)
-        current_paths =
-          Scanner.scan(base_dir, [])
-          |> Enum.map(fn {_, path} -> path end)
-          |> MapSet.new()
-
-        old_paths = old_metas |> Map.keys() |> MapSet.new()
-
-        removed = MapSet.difference(old_paths, current_paths)
-        added = MapSet.difference(current_paths, old_paths)
-
-        changed =
-          MapSet.intersection(old_paths, current_paths)
-          |> Enum.filter(fn path ->
-            {_id, old_mtime, old_size} = old_metas[path]
-
-            case File.stat(path, time: :posix) do
-              {:ok, %{mtime: mtime, size: size}} -> mtime != old_mtime or size != old_size
-              _ -> true
-            end
-          end)
-          |> MapSet.new()
-
-        unchanged = MapSet.size(current_paths) - MapSet.size(changed) - MapSet.size(added)
-
-        IO.puts(
-          "  #{MapSet.size(added)} added, #{MapSet.size(changed)} changed, " <>
-            "#{MapSet.size(removed)} removed, #{unchanged} unchanged"
-        )
-
-        if Enum.all?([added, changed, removed], &(MapSet.size(&1) == 0)) do
-          IO.puts("Index is already up to date.")
-          {:ok, index}
-        else
-          # Remove postings for deleted/changed files
-          to_remove = MapSet.union(changed, removed)
-          ids_to_remove = Enum.map(to_remove, fn p -> elem(old_metas[p], 0) end)
-          shard_list = Tuple.to_list(index.postings_tables)
-
-          Enum.each(ids_to_remove, fn file_id ->
-            Enum.each(shard_list, fn table ->
-              :ets.match_delete(table, {:_, file_id, :_, :_})
-            end)
-
-            :ets.delete(index.files_table, file_id)
-          end)
-
-          # Assign new IDs for added/changed files (continue from highest existing ID)
-          next_id =
-            old_metas
-            |> Map.values()
-            |> Enum.map(fn {id, _, _} -> id end)
-            |> then(fn ids -> if Enum.empty?(ids), do: 0, else: Enum.max(ids) + 1 end)
-
-          to_reindex =
-            MapSet.union(added, changed)
-            |> Enum.sort()
-            |> Enum.with_index(next_id)
-            |> Enum.map(fn {path, id} -> {id, path} end)
-
-          :ets.insert(index.files_table, to_reindex)
-
-          num_shards = index.num_shards
-          postings_tables = index.postings_tables
-
-          to_reindex
-          |> Task.async_stream(
-            fn {file_id, file_path} ->
-              case File.read(file_path) do
-                {:ok, content} ->
-                  sample = binary_part(content, 0, min(512, byte_size(content)))
-
-                  unless binary?(sample) do
-                    content
-                    |> Native.extract_trigrams()
-                    |> Enum.group_by(
-                      fn {trigram, _nm, _lm} -> rem(:erlang.phash2(trigram), num_shards) end,
-                      fn {trigram, nm, lm} -> {trigram, file_id, nm, lm} end
-                    )
-                    |> Enum.each(fn {shard, rows} ->
-                      :ets.insert(elem(postings_tables, shard), rows)
-                    end)
-                  end
-
-                {:error, _} ->
-                  :ok
-              end
-            end,
-            max_concurrency: num_shards * 2,
-            ordered: false,
-            timeout: :infinity
-          )
-          |> Stream.run()
-
-          # Build updated file_metas: drop removed/changed, add new entries
-          new_metas_delta =
-            to_reindex
-            |> Enum.flat_map(fn {id, path} ->
-              case File.stat(path, time: :posix) do
-                {:ok, %{mtime: mtime, size: size}} -> [{path, {id, mtime, size}}]
-                _ -> []
-              end
-            end)
-            |> Map.new()
-
-          new_metas =
-            old_metas
-            |> Map.drop(MapSet.to_list(to_remove))
-            |> Map.merge(new_metas_delta)
-
-          trigram_count =
-            index.postings_tables
-            |> Tuple.to_list()
-            |> Task.async_stream(&count_unique_keys/1, ordered: false, timeout: :infinity)
-            |> Enum.map(fn {:ok, n} -> n end)
-            |> Enum.sum()
-
-          elapsed = System.monotonic_time(:microsecond) - start_time
-
-          updated_index = %{
-            index
-            | file_count: map_size(new_metas),
-              trigram_count: trigram_count,
-              build_time_us: elapsed,
-              file_metas: new_metas
-          }
-
-          save(updated_index, base_dir)
-          {:ok, updated_index}
-        end
+        do_incremental_update(base_dir, index, old_metas)
     end
+  end
+
+  defp full_rebuild(base_dir, reason) do
+    IO.puts("#{reason} — performing full build...")
+    index = build(base_dir)
+    save(index, base_dir)
+    {:ok, index}
+  end
+
+  defp do_incremental_update(base_dir, index, old_metas) do
+    start_time = System.monotonic_time(:microsecond)
+
+    current_paths =
+      Scanner.scan(base_dir, [])
+      |> Enum.map(fn {_, path} -> path end)
+      |> MapSet.new()
+
+    old_paths = old_metas |> Map.keys() |> MapSet.new()
+
+    removed = MapSet.difference(old_paths, current_paths)
+    added = MapSet.difference(current_paths, old_paths)
+    changed = detect_changed(old_paths, current_paths, old_metas)
+
+    unchanged = MapSet.size(current_paths) - MapSet.size(changed) - MapSet.size(added)
+
+    IO.puts(
+      "  #{MapSet.size(added)} added, #{MapSet.size(changed)} changed, " <>
+        "#{MapSet.size(removed)} removed, #{unchanged} unchanged"
+    )
+
+    if Enum.all?([added, changed, removed], &(MapSet.size(&1) == 0)) do
+      IO.puts("Index is already up to date.")
+      {:ok, index}
+    else
+      apply_incremental_changes(index, base_dir, old_metas, added, changed, removed, start_time)
+    end
+  end
+
+  defp detect_changed(old_paths, current_paths, old_metas) do
+    MapSet.intersection(old_paths, current_paths)
+    |> Enum.filter(fn path ->
+      {_id, old_mtime, old_size} = old_metas[path]
+
+      case File.stat(path, time: :posix) do
+        {:ok, %{mtime: mtime, size: size}} -> mtime != old_mtime or size != old_size
+        _ -> true
+      end
+    end)
+    |> MapSet.new()
+  end
+
+  defp apply_incremental_changes(index, base_dir, old_metas, added, changed, removed, start_time) do
+    to_remove = MapSet.union(changed, removed)
+    ids_to_remove = Enum.map(to_remove, fn p -> elem(old_metas[p], 0) end)
+    shard_list = Tuple.to_list(index.postings_tables)
+
+    Enum.each(ids_to_remove, fn file_id ->
+      Enum.each(shard_list, &:ets.match_delete(&1, {:_, file_id, :_, :_}))
+      :ets.delete(index.files_table, file_id)
+    end)
+
+    next_id =
+      old_metas
+      |> Map.values()
+      |> Enum.map(fn {id, _, _} -> id end)
+      |> then(fn ids -> if Enum.empty?(ids), do: 0, else: Enum.max(ids) + 1 end)
+
+    to_reindex =
+      MapSet.union(added, changed)
+      |> Enum.sort()
+      |> Enum.with_index(next_id)
+      |> Enum.map(fn {path, id} -> {id, path} end)
+
+    :ets.insert(index.files_table, to_reindex)
+
+    to_reindex
+    |> Task.async_stream(
+      fn {file_id, file_path} ->
+        index_file_content(file_path, file_id, index.postings_tables, index.num_shards)
+      end,
+      max_concurrency: index.num_shards * 2,
+      ordered: false,
+      timeout: :infinity
+    )
+    |> Stream.run()
+
+    new_metas =
+      old_metas
+      |> Map.drop(MapSet.to_list(to_remove))
+      |> Map.merge(build_file_metas(to_reindex))
+
+    trigram_count = count_all_trigrams(index.postings_tables)
+    elapsed = System.monotonic_time(:microsecond) - start_time
+
+    updated_index = %{
+      index
+      | file_count: map_size(new_metas),
+        trigram_count: trigram_count,
+        build_time_us: elapsed,
+        file_metas: new_metas
+    }
+
+    save(updated_index, base_dir)
+    {:ok, updated_index}
   end
 
   @doc """
@@ -422,70 +361,14 @@ defmodule Instantgrep.Index do
     meta_path = Path.join(dir, "meta.dat")
     files_path = Path.join(dir, @files_file)
 
-    if File.regular?(meta_path) and File.regular?(files_path) do
-      case meta_path |> File.read!() |> :erlang.binary_to_term() do
-        %{format_version: @format_version, num_shards: num_shards} = meta ->
-          shard_paths = for i <- 0..(num_shards - 1), do: Path.join(dir, shard_file(i))
-
-          if Enum.all?(shard_paths, &File.regular?/1) do
-            # Allocate all shard tables up front
-            postings_tables =
-              for _ <- 0..(num_shards - 1) do
-                :ets.new(:instantgrep_postings, [
-                  :bag,
-                  :public,
-                  write_concurrency: true,
-                  read_concurrency: true
-                ])
-              end
-              |> List.to_tuple()
-
-            # Load each shard file in parallel — no group_by, direct insert
-            shard_paths
-            |> Enum.with_index()
-            |> Task.async_stream(
-              fn {path, i} ->
-                rows = path |> File.read!() |> :erlang.binary_to_term()
-                :ets.insert(elem(postings_tables, i), rows)
-              end,
-              max_concurrency: num_shards,
-              ordered: false,
-              timeout: :infinity
-            )
-            |> Stream.run()
-
-            files_data = files_path |> File.read!() |> :erlang.binary_to_term()
-            files_table = :ets.new(:instantgrep_files, [:set, :public, read_concurrency: true])
-            :ets.insert(files_table, files_data)
-
-            metas_path = Path.join(dir, @file_metas_file)
-
-            file_metas =
-              if File.regular?(metas_path) do
-                metas_path |> File.read!() |> :erlang.binary_to_term()
-              else
-                %{}
-              end
-
-            {:ok,
-             %__MODULE__{
-               postings_tables: postings_tables,
-               num_shards: num_shards,
-               files_table: files_table,
-               file_count: meta.file_count,
-               trigram_count: meta.trigram_count,
-               build_time_us: meta.build_time_us,
-               file_metas: file_metas
-             }}
-          else
-            {:error, :not_found}
-          end
-
-        _ ->
-          {:error, :not_found}
-      end
+    with true <- File.regular?(meta_path) and File.regular?(files_path),
+         raw_meta <- meta_path |> File.read!() |> :erlang.binary_to_term(),
+         %{format_version: @format_version, num_shards: num_shards} = meta <- raw_meta,
+         shard_paths <- for(i <- 0..(num_shards - 1), do: Path.join(dir, shard_file(i))),
+         true <- Enum.all?(shard_paths, &File.regular?/1) do
+      load_shards(meta, shard_paths, files_path, dir)
     else
-      {:error, :not_found}
+      _ -> {:error, :not_found}
     end
   end
 
@@ -500,6 +383,110 @@ defmodule Instantgrep.Index do
     IO.puts("  Shards:          #{index.num_shards}")
     IO.puts("  Build time:      #{format_time(index.build_time_us)}")
     :ok
+  end
+
+  # Reads a file, extracts trigrams (via NIF or fallback), and inserts postings
+  # into the appropriate shard tables. Returns a stat entry for file_metas or nil.
+  defp index_file_content(file_path, file_id, postings_tables, num_shards) do
+    stat_entry =
+      case File.stat(file_path, time: :posix) do
+        {:ok, %{mtime: mtime, size: size}} -> {file_path, {file_id, mtime, size}}
+        _ -> nil
+      end
+
+    case File.read(file_path) do
+      {:ok, content} ->
+        sample = binary_part(content, 0, min(512, byte_size(content)))
+        unless binary?(sample), do: insert_trigrams(content, file_id, postings_tables, num_shards)
+
+      {:error, _} ->
+        :ok
+    end
+
+    stat_entry
+  end
+
+  defp insert_trigrams(content, file_id, postings_tables, num_shards) do
+    content
+    |> Native.extract_trigrams()
+    |> Enum.group_by(
+      fn {trigram, _nm, _lm} -> rem(:erlang.phash2(trigram), num_shards) end,
+      fn {trigram, nm, lm} -> {trigram, file_id, nm, lm} end
+    )
+    |> Enum.each(fn {shard, rows} ->
+      :ets.insert(elem(postings_tables, shard), rows)
+    end)
+  end
+
+  defp load_shards(meta, shard_paths, files_path, dir) do
+    num_shards = meta.num_shards
+
+    postings_tables =
+      for _ <- 0..(num_shards - 1) do
+        :ets.new(:instantgrep_postings, [
+          :bag,
+          :public,
+          write_concurrency: true,
+          read_concurrency: true
+        ])
+      end
+      |> List.to_tuple()
+
+    shard_paths
+    |> Enum.with_index()
+    |> Task.async_stream(
+      fn {path, i} ->
+        rows = path |> File.read!() |> :erlang.binary_to_term()
+        :ets.insert(elem(postings_tables, i), rows)
+      end,
+      max_concurrency: num_shards,
+      ordered: false,
+      timeout: :infinity
+    )
+    |> Stream.run()
+
+    files_data = files_path |> File.read!() |> :erlang.binary_to_term()
+    files_table = :ets.new(:instantgrep_files, [:set, :public, read_concurrency: true])
+    :ets.insert(files_table, files_data)
+
+    metas_path = Path.join(dir, @file_metas_file)
+    file_metas = load_file_metas(metas_path)
+
+    {:ok,
+     %__MODULE__{
+       postings_tables: postings_tables,
+       num_shards: num_shards,
+       files_table: files_table,
+       file_count: meta.file_count,
+       trigram_count: meta.trigram_count,
+       build_time_us: meta.build_time_us,
+       file_metas: file_metas
+     }}
+  end
+
+  defp load_file_metas(path) do
+    if File.regular?(path),
+      do: path |> File.read!() |> :erlang.binary_to_term(),
+      else: %{}
+  end
+
+  defp build_file_metas(file_entries) do
+    file_entries
+    |> Enum.flat_map(fn {id, path} ->
+      case File.stat(path, time: :posix) do
+        {:ok, %{mtime: mtime, size: size}} -> [{path, {id, mtime, size}}]
+        _ -> []
+      end
+    end)
+    |> Map.new()
+  end
+
+  defp count_all_trigrams(postings_tables) do
+    postings_tables
+    |> Tuple.to_list()
+    |> Task.async_stream(&count_unique_keys/1, ordered: false, timeout: :infinity)
+    |> Enum.map(fn {:ok, n} -> n end)
+    |> Enum.sum()
   end
 
   # Count unique keys in a :bag table using first/next (which iterates unique keys, not objects)

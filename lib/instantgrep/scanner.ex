@@ -53,25 +53,26 @@ defmodule Instantgrep.Scanner do
         if indexable_file?(path, max_size, gitignore_patterns), do: [path], else: []
 
       File.dir?(path) ->
-        if ignored_dir?(path) do
-          []
-        else
-          case File.ls(path) do
-            {:error, _} ->
-              []
-
-            {:ok, entries} ->
-              entries
-              |> Enum.flat_map(fn entry ->
-                do_scan(Path.join(path, entry), max_size, gitignore_patterns)
-              end)
-
-              # No sort here — do_scan_parallel sorts the full combined list once at the top level.
-          end
-        end
+        scan_directory(path, max_size, gitignore_patterns)
 
       true ->
         []
+    end
+  end
+
+  defp scan_directory(path, max_size, gitignore_patterns) do
+    if ignored_dir?(path) do
+      []
+    else
+      case File.ls(path) do
+        {:error, _} ->
+          []
+
+        {:ok, entries} ->
+          Enum.flat_map(entries, fn entry ->
+            do_scan(Path.join(path, entry), max_size, gitignore_patterns)
+          end)
+      end
     end
   end
 
