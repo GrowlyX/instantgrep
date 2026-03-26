@@ -58,7 +58,7 @@ defmodule Instantgrep.IndexTest do
       index = Index.build(@test_dir)
       all = Index.all_files(index)
       assert length(all) >= 2
-      assert Enum.all?(all, &String.starts_with?(&1, @test_dir))
+      assert Enum.all?(all, &String.starts_with?(&1, Path.expand(@test_dir)))
     end
   end
 end
