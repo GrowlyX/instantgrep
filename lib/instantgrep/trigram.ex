@@ -8,8 +8,9 @@ defmodule Instantgrep.Trigram do
   """
 
   @type trigram :: <<_::24>>
+  @type trigram_int :: 0..0xFFFFFF
   @type mask :: 0..255
-  @type trigram_masks :: %{trigram() => {next_mask :: mask(), loc_mask :: mask()}}
+  @type trigram_masks :: %{trigram_int() => {next_mask :: mask(), loc_mask :: mask()}}
 
   @doc """
   Extract all unique overlapping 3-byte trigrams from a binary.
@@ -34,7 +35,8 @@ defmodule Instantgrep.Trigram do
   - `next_mask`: 8-bit bloom filter of characters immediately following the trigram
   - `loc_mask`: 8-bit mask with `(position rem 8)` bit set for each occurrence
 
-  Returns a map of `%{trigram => {next_mask, loc_mask}}`.
+  Returns a map of `%{trigram_int => {next_mask, loc_mask}}` where trigram_int
+  is a 24-bit integer encoding (byte0 << 16 | byte1 << 8 | byte2).
   """
   @spec extract_with_masks(binary()) :: trigram_masks()
   def extract_with_masks(binary) when is_binary(binary) do
@@ -61,7 +63,13 @@ defmodule Instantgrep.Trigram do
   defp do_extract(_binary, _pos, acc), do: acc
 
   defp do_extract_with_masks(binary, pos, acc) when byte_size(binary) - pos >= 3 do
-    trigram = binary_part(binary, pos, 3)
+    # Use :binary.at/2 (returns integer, zero allocation) instead of binary_part/3
+    # which allocates a 3-byte heap binary on every iteration.
+    a = :binary.at(binary, pos)
+    b = :binary.at(binary, pos + 1)
+    c = :binary.at(binary, pos + 2)
+    # Encode as 24-bit integer — small integers are immediate BEAM values (no heap allocation).
+    trigram_key = Bitwise.bor(Bitwise.bor(Bitwise.bsl(a, 16), Bitwise.bsl(b, 8)), c)
     loc_bit = Bitwise.bsl(1, Bitwise.band(pos, 7))
 
     next_bit =
@@ -73,7 +81,7 @@ defmodule Instantgrep.Trigram do
       end
 
     acc =
-      Map.update(acc, trigram, {next_bit, loc_bit}, fn {existing_next, existing_loc} ->
+      Map.update(acc, trigram_key, {next_bit, loc_bit}, fn {existing_next, existing_loc} ->
         {Bitwise.bor(existing_next, next_bit), Bitwise.bor(existing_loc, loc_bit)}
       end)
 

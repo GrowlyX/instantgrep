@@ -18,8 +18,6 @@ jobs:
             asset_name: instantgrep-linux-amd64
           - os: macos-latest
             asset_name: instantgrep-darwin-arm64
-          - os: windows-latest
-            asset_name: instantgrep-windows-amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -28,21 +26,21 @@ jobs:
           otp-version: "27"
           elixir-version: "1.16"
 
+      - name: Install PCRE2 (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libpcre2-dev
+
+      - name: Install PCRE2 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install pcre2
+
       - run: bash build.sh
       - run: mix test
 
-      - name: Package (unix)
-        if: runner.os != 'Windows'
+      - name: Package
         run: |
-          tar czf ${{ matrix.asset_name }}.tar.gz instantgrep instantgrep-daemon instantgrep-bench README.md LICENSE
+          tar czf ${{ matrix.asset_name }}.tar.gz instantgrep instantgrep-daemon instantgrep-bench ig_client priv/ README.md LICENSE
           shasum -a 256 ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
-
-      - name: Package (windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          tar czf ${{ matrix.asset_name }}.tar.gz instantgrep instantgrep-daemon instantgrep-bench README.md LICENSE
-          sha256sum ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
@@ -66,7 +64,6 @@ jobs:
           sleep 10
           curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/instantgrep-darwin-arm64.tar.gz.sha256" -o darwin.sha256
           curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/instantgrep-linux-amd64.tar.gz.sha256" -o linux.sha256
-          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/instantgrep-windows-amd64.tar.gz.sha256" -o windows.sha256
 
       - name: Clone homebrew tap
         run: |
@@ -100,16 +97,18 @@ jobs:
               end
             end
 
-
-
             depends_on "erlang"
+            depends_on "pcre2"
 
             def install
               bin.install "instantgrep"
               bin.install "instantgrep-daemon"
               bin.install "instantgrep-bench"
+              bin.install "ig_client"
+              # Install the NIF shared library
+              (lib/"instantgrep").install Dir["priv/*"]
               bin.install_symlink "instantgrep" => "igrep"
-              bin.install_symlink "instantgrep" => "ig"
+              bin.install_symlink "ig_client" => "ig"
             end
 
             test do
@@ -131,4 +130,3 @@ jobs:
           git add Formula/instantgrep.rb
           git commit -m "Update instantgrep to v${{ steps.version.outputs.version }}"
           git push
-

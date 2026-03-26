@@ -66,6 +66,62 @@ defmodule Instantgrep.Query do
     end)
   end
 
+  @doc """
+  Evaluate a query tree using mask-aware lookup for enhanced pre-filtering.
+
+  For `:all` chains of consecutive trigrams, uses the `next_mask` from each
+  posting to pre-filter candidates before looking up the next trigram — reducing
+  redundant ETS lookups on trigram pairs that cannot be adjacent in any document.
+
+  The query function must return `%{file_id => {next_mask, loc_mask}}`.
+  """
+  @spec evaluate_masked(
+          query_tree(),
+          (binary() -> %{non_neg_integer() => {non_neg_integer(), non_neg_integer()}})
+        ) :: MapSet.t() | :all
+  def evaluate_masked(:none, _query_fn), do: :all
+
+  def evaluate_masked({:all, []}, _query_fn), do: MapSet.new()
+
+  def evaluate_masked({:all, [first | rest]}, query_fn) do
+    first_map = query_fn.(first)
+
+    {final_map, _} =
+      Enum.reduce(rest, {first_map, first}, fn trigram, {candidates, _prev} ->
+        # next_mask for trigram T at position p stores: bsl(1, band(char_at_p+3, 7))
+        # char_at_p+3 is the 4th character starting at p, which equals the LAST byte
+        # of the next overlapping trigram T' (which starts at p+1, so T'[2] = char_at_p+3).
+        # We must use last_byte of T', NOT first_byte.
+        <<_, _, last_byte>> = trigram
+        next_bit = Bitwise.bsl(1, Bitwise.band(last_byte, 7))
+
+        pre_filtered_ids =
+          candidates
+          |> Enum.filter(fn {_id, {next_mask, _loc}} ->
+            Bitwise.band(next_mask, next_bit) != 0
+          end)
+          |> MapSet.new(fn {id, _} -> id end)
+
+        current_map =
+          query_fn.(trigram)
+          |> Map.filter(fn {id, _} -> MapSet.member?(pre_filtered_ids, id) end)
+
+        {current_map, trigram}
+      end)
+
+    MapSet.new(Map.keys(final_map))
+  end
+
+  def evaluate_masked({:any, branches}, query_fn) do
+    branches
+    |> Enum.map(&evaluate_masked(&1, query_fn))
+    |> Enum.reduce(fn
+      :all, _acc -> :all
+      _set, :all -> :all
+      set, acc -> MapSet.union(acc, set)
+    end)
+  end
+
   # --- Private: Alternation Splitting ---
 
   # Split on top-level `|` (outside of parens/brackets)

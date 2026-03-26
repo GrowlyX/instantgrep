@@ -67,7 +67,7 @@ defmodule Instantgrep.Matcher do
     case File.read(path) do
       {:ok, content} ->
         content
-        |> String.split("\n")
+        |> :binary.split("\n", [:global])
         |> Enum.with_index(1)
         |> Enum.flat_map(fn {line, line_num} ->
           if Regex.match?(regex, line) do

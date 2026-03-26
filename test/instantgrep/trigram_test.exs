@@ -31,12 +31,14 @@ defmodule Instantgrep.TrigramTest do
   end
 
   describe "extract_with_masks/1" do
-    test "returns map with trigram keys and mask tuples" do
+    test "returns map with integer trigram keys and mask tuples" do
       result = Trigram.extract_with_masks("hello")
       assert is_map(result)
 
-      assert Map.has_key?(result, "hel")
-      {next_mask, loc_mask} = Map.get(result, "hel")
+      # "hel" as integer: ?h * 65536 + ?e * 256 + ?l
+      hel_key = ?h * 65536 + ?e * 256 + ?l
+      assert Map.has_key?(result, hel_key)
+      {next_mask, loc_mask} = Map.get(result, hel_key)
       assert is_integer(next_mask)
       assert is_integer(loc_mask)
       assert next_mask >= 0 and next_mask <= 255
@@ -46,7 +48,8 @@ defmodule Instantgrep.TrigramTest do
     test "loc_mask encodes position mod 8" do
       # "abcabc" -> "abc" at positions 0 and 3
       result = Trigram.extract_with_masks("abcabc")
-      {_next, loc_mask} = Map.get(result, "abc")
+      abc_key = ?a * 65536 + ?b * 256 + ?c
+      {_next, loc_mask} = Map.get(result, abc_key)
       # Position 0 -> bit 0, position 3 -> bit 3
       assert Bitwise.band(loc_mask, 1) == 1
       assert Bitwise.band(loc_mask, 8) == 8
@@ -54,7 +57,8 @@ defmodule Instantgrep.TrigramTest do
 
     test "next_mask encodes following character" do
       result = Trigram.extract_with_masks("abcd")
-      {next_mask, _loc} = Map.get(result, "abc")
+      abc_key = ?a * 65536 + ?b * 256 + ?c
+      {next_mask, _loc} = Map.get(result, abc_key)
       # 'd' follows "abc", hash bit = 1 << (ord('d') & 7) = 1 << 4 = 16
       expected_bit = Bitwise.bsl(1, Bitwise.band(?d, 7))
       assert Bitwise.band(next_mask, expected_bit) == expected_bit

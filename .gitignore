@@ -4,10 +4,14 @@
 /instantgrep
 /instantgrep-daemon
 /instantgrep-bench
+/ig_client
 ig
 igrep
 *.beam
 *.ez
+
+# NIF build output
+/priv/
 
 # Index data
 .instantgrep/
