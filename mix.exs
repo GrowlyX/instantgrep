@@ -21,7 +21,7 @@ defmodule Instantgrep.MixProject do
   end
 
   defp escript do
-    [main_module: Instantgrep.CLI]
+    [main_module: Instantgrep.CLI, name: "instantgrep-daemon"]
   end
 
   defp deps do

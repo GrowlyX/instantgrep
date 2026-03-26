@@ -43,7 +43,8 @@ defmodule Instantgrep.CLI do
 
   # --- Argument Parsing ---
 
-  defp parse_args(args) do
+  @doc false
+  def parse_args(args) do
     {opts, positional, _} =
       OptionParser.parse(args,
         strict: [

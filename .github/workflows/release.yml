@@ -35,14 +35,14 @@ jobs:
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
-          tar czf ${{ matrix.asset_name }}.tar.gz instantgrep instantgrep-bench README.md LICENSE
+          tar czf ${{ matrix.asset_name }}.tar.gz instantgrep instantgrep-daemon instantgrep-bench README.md LICENSE
           shasum -a 256 ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
 
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          tar czf ${{ matrix.asset_name }}.tar.gz instantgrep instantgrep-bench README.md LICENSE
+          tar czf ${{ matrix.asset_name }}.tar.gz instantgrep instantgrep-daemon instantgrep-bench README.md LICENSE
           sha256sum ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
 
       - name: Upload to Release
@@ -113,6 +113,7 @@ jobs:
 
             def install
               bin.install "instantgrep"
+              bin.install "instantgrep-daemon"
               bin.install "instantgrep-bench"
               bin.install_symlink "instantgrep" => "igrep"
               bin.install_symlink "instantgrep" => "ig"
