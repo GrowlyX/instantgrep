@@ -77,7 +77,6 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           DARWIN_SHA=$(cut -d ' ' -f1 darwin.sha256)
           LINUX_SHA=$(cut -d ' ' -f1 linux.sha256)
-          WINDOWS_SHA=$(cut -d ' ' -f1 windows.sha256)
           REPO="${{ github.repository }}"
 
           cat > tap/Formula/instantgrep.rb << 'FORMULA'
@@ -101,12 +100,7 @@ jobs:
               end
             end
 
-            on_system :windows do
-              on_intel do
-                url "https://github.com/REPO_PLACEHOLDER/releases/download/vVERSION_PLACEHOLDER/instantgrep-windows-amd64.tar.gz"
-                sha256 "WINDOWS_SHA_PLACEHOLDER"
-              end
-            end
+
 
             depends_on "erlang"
 
@@ -128,7 +122,6 @@ jobs:
           sed -i "s|VERSION_PLACEHOLDER|${VERSION}|g" tap/Formula/instantgrep.rb
           sed -i "s|DARWIN_SHA_PLACEHOLDER|${DARWIN_SHA}|g" tap/Formula/instantgrep.rb
           sed -i "s|LINUX_SHA_PLACEHOLDER|${LINUX_SHA}|g" tap/Formula/instantgrep.rb
-          sed -i "s|WINDOWS_SHA_PLACEHOLDER|${WINDOWS_SHA}|g" tap/Formula/instantgrep.rb
 
       - name: Push formula update
         run: |
